@@ -2,8 +2,8 @@
 # Test runner for shunt evals: hook routing decisions + token savings benchmarks
 #
 # Usage:
-#   bash evals/run.sh              # hooks only (no Portal access needed)
-#   bash evals/run.sh --benchmark  # hooks + token savings (requires portal-cli auth)
+#   bash evals/run.sh              # hooks + transport (no Codex sign-in needed)
+#   bash evals/run.sh --benchmark  # + token savings (uses your ChatGPT subscription via codex)
 #   bash evals/run.sh --all        # every eval suite
 
 set -euo pipefail
@@ -121,11 +121,11 @@ run_suite() {
 
 # ── Transport suite ──
 
-# Runs as a child process: the suite stubs portal-cli, and that stub must not
+# Runs as a child process: the suite stubs codex, and that stub must not
 # leak into the benchmarks below, which need the real one.
 run_transport_suite() {
   echo ""
-  echo "Transport (scripts/lib/aika.sh, stubbed portal-cli)"
+  echo "Transport (scripts/lib/codex.sh, stubbed codex)"
   echo "────────────────────────────────────────────────────────────────"
 
   local output counts p f
@@ -223,10 +223,10 @@ run_benchmark_code_write() {
 }
 
 run_benchmarks() {
-  # shellcheck source=../scripts/lib/aika.sh
-  . "$PLUGIN_DIR/scripts/lib/aika.sh"
+  # shellcheck source=../scripts/lib/codex.sh
+  . "$PLUGIN_DIR/scripts/lib/codex.sh"
   if ! shunt_preflight; then
-    printf "\n\033[33mSkipping benchmarks: portal-cli or jq not available\033[0m\n"
+    printf "\n\033[33mSkipping benchmarks: codex or jq not available\033[0m\n"
     return
   fi
 
@@ -298,7 +298,7 @@ run_benchmarks() {
     "Total" "" "$total_without" "$total_with" "$total_pct"
   echo ""
   printf "  \033[2mToken estimate: chars / 4. Output tokens weighted 5x (Opus pricing).\033[0m\n"
-  printf "  \033[2mBulk-read: without = file content in context, with = AiKA summary in context.\033[0m\n"
+  printf "  \033[2mBulk-read: without = file content in context, with = worker summary in context.\033[0m\n"
   printf "  \033[2mCode-write: without = read files + generate code, with = code written to disk.\033[0m\n"
 }
 

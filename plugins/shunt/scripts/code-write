@@ -1,8 +1,8 @@
 #!/bin/bash
-# Delegate boilerplate generation to AiKA code-writer mode
+# Delegate boilerplate generation to the Codex code-writer worker
 # Usage: code-write --spec "write tests for UserService" --reference ref.test.ts --target out.test.ts
 
-. "$(cd "$(dirname "$0")" && pwd)/lib/aika.sh"
+. "$(cd "$(dirname "$0")" && pwd)/lib/codex.sh"
 
 MODE_NAME="code-writer"
 
@@ -57,4 +57,4 @@ else
 fi
 
 # Token usage to stderr
-echo "[shunt: delegated to $MODE_NAME]" >&2
+echo "[shunt: delegated to $MODE_NAME on $SHUNT_MODEL]" >&2

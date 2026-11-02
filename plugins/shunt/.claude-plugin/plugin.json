@@ -2,7 +2,7 @@
   "name": "shunt",
   "displayName": "Shunt",
   "version": "0.2.0",
-  "description": "Shunts I/O-heavy work to AiKA modes to save tokens. Hooks block large file reads and redirect to bulk-reader/code-writer scripts backed by the Portal CLI.",
+  "description": "Shunts I/O-heavy work to a GPT worker (gpt-6-luna by default) via the Codex CLI on your ChatGPT subscription to save tokens. Hooks block large file reads and redirect to bulk-reader/code-writer scripts.",
   "author": {
     "name": "Spotify"
   },
@@ -13,7 +13,7 @@
     "token-optimization",
     "model-routing",
     "delegation",
-    "aika"
+    "codex"
   ],
   "skills": "./skills/"
 }

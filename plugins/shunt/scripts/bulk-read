@@ -1,8 +1,8 @@
 #!/bin/bash
-# Delegate file reading to AiKA bulk-reader mode
+# Delegate file reading to the Codex bulk-reader worker
 # Usage: bulk-read --question "what does this do?" --paths file1.ts file2.ts
 
-. "$(cd "$(dirname "$0")" && pwd)/lib/aika.sh"
+. "$(cd "$(dirname "$0")" && pwd)/lib/codex.sh"
 
 MODE_NAME="bulk-reader"
 
@@ -55,4 +55,4 @@ shunt_invoke "$MODE_NAME" "$message_file" || exit 1
 
 # Token usage to stderr
 char_count=$(wc -c < "$message_file" | tr -d ' ')
-echo "[shunt: ~$((char_count / 4)) input tokens | delegated to $MODE_NAME]" >&2
+echo "[shunt: ~$((char_count / 4)) input tokens | delegated to $MODE_NAME on $SHUNT_MODEL]" >&2

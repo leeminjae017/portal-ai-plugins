@@ -1,6 +1,6 @@
 ---
 name: code-writer
-description: "Delegate boilerplate code generation to AiKA. Use for tests, config, docstrings, type stubs, or any generation where >80% is predictable from reference files."
+description: "Delegate boilerplate code generation to a GPT worker via Codex. Use for tests, config, docstrings, type stubs, or any generation where >80% is predictable from reference files."
 ---
 
 ```bash

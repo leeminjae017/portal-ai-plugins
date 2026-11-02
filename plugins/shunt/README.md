@@ -1,61 +1,35 @@
 # shunt
 
-A Claude Code plugin that shunts I/O-heavy work to AiKA modes, saving 82-94% of tokens on large file reads and boilerplate generation.
+A Claude Code plugin that shunts I/O-heavy work to a cheaper GPT worker (default `gpt-6-luna`) through the Codex CLI, saving 82-94% of Claude tokens on large file reads and boilerplate generation. The worker runs on the ChatGPT subscription Codex is signed into — no API key.
 
 ## How it works
 
 Three layers, from hard gate to soft suggestion:
 
 1. **Hooks** block Claude from reading large files and redirect to the bulk-reader skill
-2. **Scripts** handle the AiKA invocation and output cleanup
+2. **Scripts** handle the Codex invocation and output cleanup
 3. **Skills** tell Claude when and how to call the scripts
 
 Claude never assembles bash pipelines from prose. It calls a script with named arguments. The scripts handle everything internally.
 
-Delegation goes through the Portal CLI actions registry — one `aika:invoke-chat` call per delegation — so the plugin works against any Portal instance with AiKA enabled. Modes are addressed by name and resolved server-side: case-insensitive, preferring your own mode, then your groups', then public ones; a name matching nothing or several modes equally fails with the candidate ids.
+Delegation goes through `codex exec` — one call per delegation. Each call sends the worker's instructions (bulk-reader or code-writer, defined in `scripts/lib/codex.sh`) followed by the files and the question or spec. The worker runs in an empty, read-only directory with your own Codex config, hooks and exec rules switched off, so it sees only what the script sends.
 
 ## Prerequisites
 
 - [`jq`](https://jqlang.org) — `brew install jq`
-- The **portal** plugin from this marketplace, which provides the Portal CLI that shunt delegates through:
+- The Codex CLI, signed in with ChatGPT — `npm i -g @openai/codex`, or the copy bundled with the ChatGPT desktop app. Then:
 
 ```bash
-claude plugin install portal@portal
+codex login   # choose "Sign in with ChatGPT"
 ```
 
-Then, in a new session, set up and authenticate the CLI against your Portal instance:
-
-```text
-/portal:setup
-```
-
-Check whether the two AiKA modes (`bulk-reader` and `code-writer`) already exist on your instance — many instances ship them as public modes:
+Check that the worker model is available on your plan:
 
 ```bash
-portal-cli actions aika:list-modes --json --input '{"search": "bulk-reader"}'
+echo "Reply with exactly: OK" | codex exec -m gpt-6-luna --skip-git-repo-check --ephemeral -
 ```
 
-If they exist, no mode creation is needed — just install the plugin and go. If not, or to create your own customized versions (e.g. different model or instructions):
-
-```bash
-portal-cli actions aika:create-mode --input '{
-  "name": "bulk-reader",
-  "description": "Bulk file reader for code analysis",
-  "instructions": "You are a precise code analyst. Read the provided files and answer the question concisely. Output structured bullets only. No greetings, no prose, no preambles, no summaries. Lead every bullet with the exact name, type, or line number. Use nested bullets for details. Skip anything the caller did not ask for.",
-  "tags": ["coding", "delegation"],
-  "resource_limits": { "temperature": 0.2 }
-}'
-
-portal-cli actions aika:create-mode --input '{
-  "name": "code-writer",
-  "description": "Boilerplate code generator",
-  "instructions": "You generate code files based on a spec and reference files. Match the existing patterns, conventions, naming, and style exactly. Output only the code — no explanations, no markdown fences unless asked. If the spec is ambiguous, make reasonable choices that match the patterns in the reference code.",
-  "tags": ["coding", "delegation"],
-  "resource_limits": { "temperature": 0.2 }
-}'
-```
-
-A mode you create is private and owned by you, and name resolution prefers your own modes — so your customized `bulk-reader` automatically shadows the public one, no configuration needed.
+Usage counts against your ChatGPT plan's Codex limits. Each call carries a fixed overhead of a few thousand tokens (Codex's own system prompt) on top of the files you send.
 
 ## Plugin structure
 
@@ -69,9 +43,9 @@ shunt/
 │   └── check-bash-read      # Blocks cat/head/tail on large files
 ├── scripts/
 │   ├── lib/
-│   │   └── aika.sh          # Shared aika:invoke-chat plumbing
-│   ├── bulk-read            # Invokes the bulk-reader mode
-│   └── code-write           # Invokes the code-writer mode
+│   │   └── codex.sh         # Shared codex exec plumbing + worker instructions
+│   ├── bulk-read            # Invokes the bulk-reader worker
+│   └── code-write           # Invokes the code-writer worker
 ├── skills/
 │   ├── bulk-reader/
 │   │   └── SKILL.md         # When/how to call bulk-read
@@ -81,7 +55,7 @@ shunt/
     ├── run.sh                # Runs hook + transport evals (51 tests)
     ├── hook-evals.json       # Read hook test cases (17)
     ├── bash-hook-evals.json  # Bash hook test cases (17)
-    ├── transport-evals.sh    # scripts/lib/aika.sh against a stubbed CLI (17)
+    ├── transport-evals.sh    # scripts/lib/codex.sh against a stubbed codex (17)
     ├── evals.json            # End-to-end skill test cases (3)
     ├── benchmarks.json       # Token savings scenarios (4)
     └── fixtures/             # Test fixture files
@@ -91,7 +65,7 @@ shunt/
 
 ### bulk-read
 
-Delegates file reading to AiKA. Files are wrapped in XML tags (`<file path="...">`) for clear boundaries.
+Delegates file reading to the worker. Files are wrapped in XML tags (`<file path="...">`) for clear boundaries.
 
 ```bash
 bulk-read --question "What does this service do?" --paths src/Service.java src/Handler.java
@@ -102,7 +76,7 @@ bulk-read --question "Which methods call the database?" --paths src/Service.java
 
 ### code-write
 
-Delegates boilerplate generation to AiKA. Strips markdown fences from output. Can write directly to disk via `--target`. `--reference` is required — without a file to match patterns against, the worker would generate context-free code that fits nothing in the project.
+Delegates boilerplate generation to the worker. Strips markdown fences from output. Can write directly to disk via `--target`. `--reference` is required — without a file to match patterns against, the worker would generate context-free code that fits nothing in the project.
 
 ```bash
 # Generate and write to file
@@ -117,11 +91,10 @@ code-write --spec "Generate a config stub" --reference config/existing.yaml
 
 ### One shot per call
 
-`aika:invoke-chat` is ephemeral: nothing is stored server-side, and the action's own follow-up
-mechanism is for the caller to replay prior turns. Replaying a file corpus is the exact cost this
-plugin exists to avoid, so shunt does not do it — every call stands alone. Re-sending files is
-free where it matters, because the corpus goes to the worker model and never enters Claude's
-context.
+Calls run with `--ephemeral`: nothing is kept between calls, and carrying context across them
+would mean replaying it from this side. Replaying a file corpus is the exact cost this plugin
+exists to avoid, so shunt does not do it — every call stands alone. Re-sending files is free
+where it matters, because the corpus goes to the worker model and never enters Claude's context.
 
 ## Hooks
 
@@ -147,12 +120,11 @@ All settings are environment variables — add them to the `env` block in `.clau
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `SHUNT_MIN_LINES` | `350` | Line count above which the Read hook blocks and redirects |
-| `SHUNT_PORTAL_INSTANCE` | CLI default | Portal instance name or URL to invoke against |
-| `PORTAL_CLI_BIN` | `portal-cli`, else `npx` | Override how portal-cli is launched |
-| `SHUNT_MAX_PAYLOAD_BYTES` | `400000` (`120000` on Linux) | Request ceiling, since input travels through argv |
-| `SHUNT_TIMEOUT_SECONDS` | `180` | Timeout for one action invocation |
-| `SHUNT_BULK_READER_MODE_ID` | — | Pin a specific mode id if the name is ambiguous |
-| `SHUNT_CODE_WRITER_MODE_ID` | — | Pin a specific mode id if the name is ambiguous |
+| `SHUNT_MODEL` | `gpt-6-luna` | Worker model, anything `codex exec -m` accepts (e.g. `gpt-5.6-luna`) |
+| `SHUNT_REASONING_EFFORT` | `low` | Worker reasoning effort |
+| `SHUNT_TIMEOUT_SECONDS` | `180` | Ceiling for one worker call |
+| `SHUNT_MAX_PAYLOAD_BYTES` | `800000` | Largest request sent in one call |
+| `CODEX_BIN` | `codex` on `PATH` | Codex binary to run |
 
 ## What doesn't get delegated
 
@@ -165,16 +137,16 @@ The plugin is designed to know when NOT to delegate:
 ## Evals
 
 ```bash
-# Hook routing + transport plumbing — needs no Portal access
+# Hook routing + transport plumbing — needs no Codex sign-in
 bash evals/run.sh
 
-# Also re-measure token savings against the real modes — needs portal-cli auth
+# Also re-measure token savings against the real worker — uses your ChatGPT plan via codex
 bash evals/run.sh --benchmark
 ```
 
 ## Benchmarks
 
-Tested against a 162K-line Java monorepo:
+Tested against a 162K-line Java monorepo (with the original AiKA backend; Claude-side savings do not depend on the worker model):
 
 | Scenario | Lines | Without shunt | With shunt | Savings |
 |----------|-------|--------------|------------|---------|
@@ -188,5 +160,5 @@ Mean bulk-read savings: **90%**
 ## Known limitations
 
 - **No enforcement for code-writer** — only bulk-reader has hook enforcement. Code-writer relies on Claude recognizing when to use it via the skill description.
-- **Request size** — `aika:invoke-chat` input is passed on the command line, so a request must fit in `ARG_MAX` (1 MB on macOS, shared with the environment; Linux additionally caps a single argument at 128 KiB). shunt refuses anything over `SHUNT_MAX_PAYLOAD_BYTES` with a clear error rather than failing with `E2BIG`. Split into smaller batches.
-- **Invocation timeout** — shunt caps one action invocation at `SHUNT_TIMEOUT_SECONDS` (default 180). Very large generations can exceed it; raise the timeout or split the spec into smaller calls.
+- **Request size** — one call must fit the worker model's context window. shunt refuses anything over `SHUNT_MAX_PAYLOAD_BYTES` (default 800,000 bytes, roughly 200K tokens) with a clear error. Split into smaller batches.
+- **Invocation timeout** — shunt caps one worker call at `SHUNT_TIMEOUT_SECONDS` (default 180). Very large generations can exceed it; raise the timeout or split the spec into smaller calls.
